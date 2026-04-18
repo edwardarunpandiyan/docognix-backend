@@ -1,15 +1,6 @@
 """
 services/cache.py – Semantic cache using Upstash Redis.
-
-Strategy:
-  • Key: "semcache:<session_id>:<query_embedding_hash>"
-  • On every query, compute the query embedding, then scan existing cache keys
-    for this session and compare cosine similarity.
-  • If any key's stored embedding has cosine_sim ≥ threshold → CACHE HIT.
-  • Cache entries store: {answer, sources, confidence, embedding}.
-
-This avoids re-running the full RAG pipeline for semantically equivalent
-questions like "What is the summary?" and "Summarise this document".
+Uses conversation_id (renamed from session_id) throughout.
 """
 from __future__ import annotations
 
@@ -28,24 +19,19 @@ _PREFIX = "semcache"
 
 
 def _embedding_hash(embedding: list[float]) -> str:
-    """Short hash of an embedding for use in Redis key."""
-    raw = json.dumps(embedding[:8], separators=(",", ":"))   # first 8 dims
+    raw = json.dumps(embedding[:8], separators=(",", ":"))
     return hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
-def _cache_key(session_id: str, emb_hash: str) -> str:
-    return f"{_PREFIX}:{session_id}:{emb_hash}"
+def _cache_key(conversation_id: str, emb_hash: str) -> str:
+    return f"{_PREFIX}:{conversation_id}:{emb_hash}"
 
 
 async def cache_lookup(
-    session_id: str,
+    conversation_id: str,
     query_embedding: list[float],
 ) -> dict | None:
-    """
-    Return cached {answer, sources, confidence} if a semantically similar
-    query was previously cached for this session.
-    """
-    pattern = f"{_PREFIX}:{session_id}:*"
+    pattern = f"{_PREFIX}:{conversation_id}:*"
     keys = await redis_keys_matching(pattern)
 
     for key in keys:
@@ -54,27 +40,25 @@ async def cache_lookup(
             continue
         sim = cosine_similarity(query_embedding, entry["embedding"])
         if sim >= settings.cache_similarity_threshold:
-            log.info("Semantic cache HIT  (sim=%.3f) for session %s", sim, session_id)
+            log.info("Semantic cache HIT (sim=%.3f) for conversation %s", sim, conversation_id)
             return {
                 "answer": entry["answer"],
                 "sources": entry["sources"],
                 "confidence": entry["confidence"],
                 "cache_hit": True,
             }
-
     return None
 
 
 async def cache_store(
-    session_id: str,
+    conversation_id: str,
     query_embedding: list[float],
     answer: str,
     sources: list[dict],
     confidence: str,
 ) -> None:
-    """Persist a query result in the semantic cache."""
     emb_hash = _embedding_hash(query_embedding)
-    key = _cache_key(session_id, emb_hash)
+    key = _cache_key(conversation_id, emb_hash)
     payload = {
         "embedding": query_embedding,
         "answer": answer,
@@ -82,14 +66,14 @@ async def cache_store(
         "confidence": confidence,
     }
     await redis_set(key, payload, ttl=settings.cache_ttl_seconds)
-    log.debug("Semantic cache STORE for session %s (key=%s)", session_id, key)
+    log.debug("Semantic cache STORE for conversation %s", conversation_id)
 
 
-async def cache_invalidate_session(session_id: str) -> None:
-    """Clear all cache entries for a session (called on new document upload)."""
-    pattern = f"{_PREFIX}:{session_id}:*"
+async def cache_invalidate_conversation(conversation_id: str) -> None:
+    """Clear all cache entries for a conversation (called on new document upload)."""
+    pattern = f"{_PREFIX}:{conversation_id}:*"
     keys = await redis_keys_matching(pattern)
     for key in keys:
         await redis_delete(key)
     if keys:
-        log.info("Invalidated %d cache entries for session %s", len(keys), session_id)
+        log.info("Invalidated %d cache entries for conversation %s", len(keys), conversation_id)
