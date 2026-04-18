@@ -1,6 +1,16 @@
 """
-models/chat.py – Pydantic schemas for sessions and chat messages.
-Matches the Docognix frontend's data contracts.
+models/chat.py – Pydantic schemas for conversations and chat messages.
+
+Naming aligned with frontend:
+  conversation_id  ← one chat thread  (was session_id in backend)
+  anonymous_id     ← browser identity stored in localStorage ("br_7xk2m9p")
+  user_id          ← null until login (future auth)
+
+Identity flow:
+  Before login:  anonymous_id = "br_7xk2m9p",  user_id = null
+  After  login:  anonymous_id = "br_7xk2m9p",  user_id = "user_abc123"
+  Backend merges all conversations where anonymous_id = "br_7xk2m9p"
+                → reassigned to user_id = "user_abc123"
 """
 from __future__ import annotations
 
@@ -12,19 +22,22 @@ from pydantic import BaseModel, Field
 from models.documents import SourceReference
 
 
-# ── Sessions ─────────────────────────────────────────────────────────────────
+# ── Conversations ─────────────────────────────────────────────────────────────
 
-class SessionCreate(BaseModel):
+class ConversationCreate(BaseModel):
     title: str = "New Chat"
+    anonymous_id: str               # required – frontend always sends this
 
 
-class SessionUpdate(BaseModel):
+class ConversationUpdate(BaseModel):
     title: str
 
 
-class SessionResponse(BaseModel):
-    session_id: UUID
+class ConversationResponse(BaseModel):
+    conversation_id: UUID
     title: str
+    anonymous_id: str | None = None
+    user_id: str | None = None      # null until login
     document_count: int = 0
     total_chunks: int = 0
     message_count: int = 0
@@ -36,28 +49,28 @@ class SessionResponse(BaseModel):
         json_encoders = {UUID: str}
 
 
-class SessionListResponse(BaseModel):
-    sessions: list[SessionResponse]
+class ConversationListResponse(BaseModel):
+    conversations: list[ConversationResponse]
     total: int
 
 
 # ── Chat Messages ─────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    """Sent by the frontend to POST /chat/{session_id}"""
+    """Sent by the frontend to POST /chat/{conversation_id}"""
     message: str = Field(..., min_length=1, max_length=4000)
-    document_ids: list[UUID] | None = None  # None = search all docs in session
+    anonymous_id: str               # frontend sends on every request
+    document_ids: list[UUID] | None = None
     stream: bool = True
 
 
 class MessageResponse(BaseModel):
-    """A persisted message (user or assistant)."""
     message_id: UUID
-    session_id: UUID
-    role: str                           # "user" | "assistant"
+    conversation_id: UUID
+    role: str                       # "user" | "assistant"
     content: str
     sources: list[SourceReference] = []
-    confidence: str | None = None       # assistant only
+    confidence: str | None = None
     model: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
@@ -74,7 +87,6 @@ class MessageListResponse(BaseModel):
 
 
 # ── SSE Stream event payloads ─────────────────────────────────────────────────
-# The frontend handles these event types in its SSE listener.
 
 class SSETokenEvent(BaseModel):
     type: str = "token"
@@ -89,7 +101,7 @@ class SSESourcesEvent(BaseModel):
 class SSEDoneEvent(BaseModel):
     type: str = "done"
     message_id: UUID
-    session_id: UUID
+    conversation_id: UUID
     confidence: str
     prompt_tokens: int
     completion_tokens: int
@@ -105,10 +117,21 @@ class SSEErrorEvent(BaseModel):
 
 
 class SSEMetaEvent(BaseModel):
-    """Sent before tokens – lets the frontend start rendering."""
     type: str = "meta"
-    session_id: UUID
+    conversation_id: UUID
     user_message_id: UUID
 
     class Config:
         json_encoders = {UUID: str}
+
+
+# ── Future auth: claim anonymous conversations on login ───────────────────────
+
+class ClaimConversationsRequest(BaseModel):
+    """
+    Called once after login. Reassigns all conversations with matching
+    anonymous_id to the authenticated user_id.
+    Frontend sends both IDs from localStorage + auth token.
+    """
+    anonymous_id: str
+    user_id: str

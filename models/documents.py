@@ -1,32 +1,26 @@
 """
 models/documents.py – Pydantic schemas for documents, chunks, and upload responses.
-These match exactly what the Docognix React frontend expects.
+Uses conversation_id (renamed from session_id) to match frontend naming.
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-
-# ── Upload / Ingest ──────────────────────────────────────────────────────────
 
 class DocumentUploadResponse(BaseModel):
-    """Returned immediately after successful processing.
-    Frontend stores this in localStorage under session.documents[].
-    """
     document_id: UUID
-    session_id: UUID
+    conversation_id: UUID          # renamed from session_id
     filename: str
     original_name: str
-    file_type: str                    # "pdf" | "docx" | "txt"
-    file_size: int                    # bytes
-    page_count: int | None            # None for plain-text files
+    file_type: str
+    file_size: int
+    page_count: int | None
     word_count: int | None
     chunk_count: int
-    status: str = "ready"             # "processing" | "ready" | "error"
+    status: str = "ready"
     created_at: datetime
 
 
@@ -37,11 +31,9 @@ class DocumentStatus(BaseModel):
     error_message: str | None = None
 
 
-# ── Document list ────────────────────────────────────────────────────────────
-
 class DocumentSummary(BaseModel):
     document_id: UUID
-    session_id: UUID
+    conversation_id: UUID          # renamed from session_id
     filename: str
     original_name: str
     file_type: str
@@ -58,11 +50,9 @@ class DocumentListResponse(BaseModel):
     total: int
 
 
-# ── Chunk (internal, also exposed as source citations) ────────────────────────
-
 class ChunkCreate(BaseModel):
     document_id: UUID
-    session_id: UUID
+    conversation_id: UUID          # renamed from session_id
     content: str
     page_number: int | None
     page_end: int | None
@@ -74,20 +64,18 @@ class ChunkCreate(BaseModel):
 
 
 class SourceReference(BaseModel):
-    """A cited chunk returned inside an assistant message.
-    Frontend renders these as citation cards in the chat view.
-    """
+    """A cited chunk returned inside an assistant message."""
     chunk_id: UUID
     document_id: UUID
-    document_name: str                # original_name for display
-    content: str                      # snippet text
-    page_number: int | None           # 1-based page number for highlighting
-    page_end: int | None              # last page if chunk spans pages
+    document_name: str
+    content: str
+    page_number: int | None
+    page_end: int | None
     chunk_index: int
-    similarity_score: float           # 0-1 cosine similarity
-    keyword_score: float = 0.0        # BM25 / TF-IDF component
-    combined_score: float             # final RRF score used for ranking
-    confidence: str                   # "high" | "medium" | "low"
+    similarity_score: float
+    keyword_score: float = 0.0
+    combined_score: float
+    confidence: str                 # "high" | "medium" | "low"
 
     class Config:
         json_encoders = {UUID: str}

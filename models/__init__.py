@@ -3,15 +3,19 @@ from .documents import (
     DocumentListResponse, ChunkCreate, SourceReference,
 )
 from .chat import (
-    SessionCreate, SessionUpdate, SessionResponse, SessionListResponse,
+    ConversationCreate, ConversationUpdate,
+    ConversationResponse, ConversationListResponse,
     ChatRequest, MessageResponse, MessageListResponse,
     SSETokenEvent, SSESourcesEvent, SSEDoneEvent, SSEErrorEvent, SSEMetaEvent,
+    ClaimConversationsRequest,
 )
 
 __all__ = [
     "DocumentUploadResponse", "DocumentStatus", "DocumentSummary",
     "DocumentListResponse", "ChunkCreate", "SourceReference",
-    "SessionCreate", "SessionUpdate", "SessionResponse", "SessionListResponse",
+    "ConversationCreate", "ConversationUpdate",
+    "ConversationResponse", "ConversationListResponse",
     "ChatRequest", "MessageResponse", "MessageListResponse",
     "SSETokenEvent", "SSESourcesEvent", "SSEDoneEvent", "SSEErrorEvent", "SSEMetaEvent",
+    "ClaimConversationsRequest",
 ]
