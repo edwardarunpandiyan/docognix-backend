@@ -177,7 +177,11 @@ def chunk_pages(
         })
         chunk_index += 1
 
-        # Overlap: step back a few sentences
+        # Overlap: step back a few sentences to maintain cross-chunk context.
+        # Cap at len(current_sents) - 1 to guarantee at least one sentence of
+        # forward progress per iteration — without this guard, when the chunk's
+        # total tokens ≤ overlap (common on the last chunk or short pages),
+        # overlap_sents equals len(current_sents) and i never advances → infinite loop.
         overlap_sents = 0
         overlap_tok = 0
         for sent, pno in reversed(current_sents):
@@ -187,7 +191,9 @@ def chunk_pages(
             overlap_tok += tok
             overlap_sents += 1
 
-        if overlap_sents:
+        overlap_sents = min(overlap_sents, len(current_sents) - 1)
+
+        if overlap_sents > 0:
             i -= overlap_sents
 
     return results

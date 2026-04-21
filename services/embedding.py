@@ -47,7 +47,7 @@ def _embed_sync(texts: list[str], is_query: bool = False) -> list[list[float]]:
 
 async def embed_texts(texts: list[str], is_query: bool = False) -> list[list[float]]:
     """Embed a batch of texts (documents or queries) asynchronously."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()   # fix: get_event_loop() is deprecated in 3.10+ and can return wrong loop
     return await loop.run_in_executor(None, _embed_sync, texts, is_query)
 
 
