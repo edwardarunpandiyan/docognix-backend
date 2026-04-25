@@ -1,17 +1,18 @@
 """
 routers/conversations.py – CRUD for conversations.
-(renamed from sessions.py to match frontend naming: conversation_id)
 
-anonymous_id is required on create and used to list conversations
-belonging to a specific browser identity.
+NOTE: Conversations are no longer created directly from this router.
+They are created atomically during document upload via
+POST /api/v1/documents/upload. The create_conversation endpoint is kept
+for admin/testing purposes only.
 
-user_id is null for now — populated when auth is added later.
-POST /conversations/claim reassigns anonymous conversations to
-an authenticated user on login.
+List endpoint returns ONLY conversations that have at least one document
+with status = 'ready'. This prevents ghost/empty conversations from
+appearing in the sidebar when a user abandoned an upload mid-way.
 """
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -27,15 +28,25 @@ router = APIRouter(prefix="/conversations", tags=["Conversations"])
 
 @router.post("", response_model=ConversationResponse, status_code=201)
 async def create_conversation(body: ConversationCreate):
+    """
+    Create a conversation directly.
+    NOTE: In normal frontend flow, conversations are created via
+    POST /api/v1/documents/upload which handles identity resolution
+    and document creation atomically. This endpoint exists for
+    admin and testing purposes.
+    """
+    anonymous_id = body.anonymous_id.strip() or str(uuid4())
+    db_user_id = body.user_id.strip() or None
+
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO conversations (title, anonymous_id, user_id)
-            VALUES ($1, $2, NULL)
+            VALUES ($1, $2, $3)
             RETURNING id, title, anonymous_id, user_id, created_at, updated_at
             """,
-            body.title, body.anonymous_id,
+            body.title, anonymous_id, db_user_id,
         )
     return ConversationResponse(
         conversation_id=row["id"],
@@ -49,26 +60,34 @@ async def create_conversation(body: ConversationCreate):
 
 @router.get("", response_model=ConversationListResponse)
 async def list_conversations(
-    anonymous_id: str = Query(..., description="Browser identity from localStorage"),
+    anonymous_id: str = Query(..., description="Browser identity UUID from localStorage"),
 ):
     """
-    Returns all conversations for a given anonymous_id.
-    Frontend always passes anonymous_id as a query param.
+    Returns conversations for a given anonymous_id that have at least
+    one document with status = 'ready'.
 
-    Example: GET /api/v1/conversations?anonymous_id=br_7xk2m9p
+    Only ready conversations are shown — prevents ghost conversations
+    (created but upload abandoned or failed) from appearing in the sidebar.
+
+    Example: GET /api/v1/conversations?anonymous_id=550e8400-e29b-41d4-a716-446655440000
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT
-                id, title, anonymous_id, user_id,
-                created_at, updated_at,
-                document_count, total_chunks,
-                message_count, last_message_at
-            FROM conversation_overview
-            WHERE anonymous_id = $1
-            ORDER BY updated_at DESC
+                co.id, co.title, co.anonymous_id, co.user_id,
+                co.created_at, co.updated_at,
+                co.document_count, co.total_chunks,
+                co.message_count, co.last_message_at
+            FROM conversation_overview co
+            WHERE co.anonymous_id = $1
+              AND EXISTS (
+                  SELECT 1 FROM documents d
+                  WHERE d.conversation_id = co.id
+                    AND d.status = 'ready'
+              )
+            ORDER BY co.updated_at DESC
             """,
             anonymous_id,
         )
@@ -156,22 +175,11 @@ async def delete_conversation(conversation_id: UUID):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
 
-# ── Claim anonymous conversations on login ────────────────────────────────────
-
 @router.post("/claim", status_code=200)
 async def claim_conversations(body: ClaimConversationsRequest):
     """
-    Called once after login.
-    Reassigns all conversations with matching anonymous_id to user_id.
-
-    Frontend flow:
-      1. User logs in → gets user_id from auth
-      2. Frontend calls POST /conversations/claim
-         { anonymous_id: "br_7xk2m9p", user_id: "user_abc123" }
-      3. Backend reassigns all matching conversations
-      4. Frontend updates localStorage with user_id
-
-    Currently a live stub — activate by wiring to Supabase Auth JWT.
+    Called once after login. Reassigns all conversations with matching
+    anonymous_id to the authenticated user_id.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
