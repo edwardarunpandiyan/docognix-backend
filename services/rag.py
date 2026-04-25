@@ -1,6 +1,13 @@
 """
 services/rag.py – Core RAG pipeline with SSE streaming.
 Uses conversation_id (renamed from session_id) throughout.
+
+SSE event order:
+  meta → sources → token × N → done → title (first message only)
+
+The title event is the last thing yielded on the very first message exchange
+(message_count == 2: one user + one assistant). Frontend uses it to update
+the conversation title in IndexedDB and the sidebar simultaneously.
 """
 from __future__ import annotations
 
@@ -16,12 +23,14 @@ from groq import Groq
 from config import settings
 from database.postgres import get_pool
 from models.chat import (
-    SSEDoneEvent, SSEErrorEvent, SSEMetaEvent, SSESourcesEvent, SSETokenEvent,
+    SSEDoneEvent, SSEErrorEvent, SSEMetaEvent, SSESourcesEvent,
+    SSETitleEvent, SSETokenEvent,
 )
 from models.documents import SourceReference
 from services.cache import cache_lookup, cache_store
 from services.embedding import embed_query
 from services.retrieval import hybrid_retrieve, score_to_confidence
+from services.title_generator import generate_title
 from utils.text_utils import approx_token_count
 
 log = logging.getLogger(__name__)
@@ -172,6 +181,10 @@ async def stream_rag_response(
                 prompt_tokens=0, completion_tokens=0,
                 latency_ms=int((time.time() - start_time) * 1000),
             ).model_dump(mode="json"))
+
+            # Title check even for cached responses
+            async for title_event in _maybe_yield_title(conversation_id, query):
+                yield title_event
             return
 
         # ── Persist user message ─────────────────────────────
@@ -276,6 +289,72 @@ async def stream_rag_response(
             latency_ms=latency_ms,
         ).model_dump(mode="json"))
 
+        # ── Title event (first message only) ──────────────────
+        # Fires after done so the user sees the full answer first.
+        # generate_title takes ~200-400ms — acceptable as the very last
+        # event before the stream closes.
+        async for title_event in _maybe_yield_title(conversation_id, query):
+            yield title_event
+
     except Exception as exc:
         log.exception("RAG pipeline error for conversation %s: %s", conversation_id, exc)
         yield sse("error", SSEErrorEvent(message=str(exc)).model_dump())
+
+
+async def _maybe_yield_title(
+    conversation_id: str,
+    query: str,
+) -> AsyncGenerator[str, None]:
+    """
+    Check if this is the first message exchange (message_count == 2).
+    If yes: generate a title, update DB, yield a title SSE event.
+    If no:  yield nothing — generator exits immediately.
+
+    Called after done event so the title never delays the answer.
+    """
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            message_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = $1",
+                conversation_id,
+            )
+
+        # Only on first exchange: 1 user message + 1 assistant = exactly 2
+        if message_count != 2:
+            return
+
+        # Check title is still default before calling Groq
+        async with pool.acquire() as conn:
+            current_title = await conn.fetchval(
+                "SELECT title FROM conversations WHERE id = $1",
+                conversation_id,
+            )
+        if current_title != "New Chat":
+            return
+
+        # Generate title
+        title = await generate_title(query)
+        if not title:
+            return
+
+        # Persist
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE conversations
+                SET title = $1, updated_at = now()
+                WHERE id = $2 AND title = 'New Chat'
+                """,
+                title[:100], conversation_id,
+            )
+        log.info("Auto-titled conversation %s → '%s'", conversation_id, title)
+
+        yield sse("title", SSETitleEvent(
+            conversation_id=UUID(conversation_id),
+            title=title,
+        ).model_dump(mode="json"))
+
+    except Exception as e:
+        # Title generation must never break the stream
+        log.warning("Title event failed for %s: %s", conversation_id, e)

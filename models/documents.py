@@ -10,9 +10,29 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
+class UploadInitResponse(BaseModel):
+    """
+    Returned by POST /api/v1/documents/upload — the entry point for every
+    new conversation. Creates conversation + document atomically.
+
+    Frontend stores conversation_id and anonymous_id in localStorage/IndexedDB
+    immediately on receiving this response, then polls /status until ready.
+    """
+    conversation_id: UUID
+    document_id: UUID
+    anonymous_id: str       # always present — frontend stores in localStorage
+    filename: str
+    file_type: str
+    file_size: int
+    status: str = "processing"
+
+    class Config:
+        json_encoders = {UUID: str}
+
+
 class DocumentUploadResponse(BaseModel):
     document_id: UUID
-    conversation_id: UUID          # renamed from session_id
+    conversation_id: UUID
     filename: str
     original_name: str
     file_type: str
@@ -33,7 +53,7 @@ class DocumentStatus(BaseModel):
 
 class DocumentSummary(BaseModel):
     document_id: UUID
-    conversation_id: UUID          # renamed from session_id
+    conversation_id: UUID
     filename: str
     original_name: str
     file_type: str
@@ -52,7 +72,7 @@ class DocumentListResponse(BaseModel):
 
 class ChunkCreate(BaseModel):
     document_id: UUID
-    conversation_id: UUID          # renamed from session_id
+    conversation_id: UUID
     content: str
     page_number: int | None
     page_end: int | None
