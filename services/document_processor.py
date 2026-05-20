@@ -133,10 +133,13 @@ async def ingest_document(
                         page_count  = $1,
                         word_count  = $2,
                         chunk_count = $3,
+                        raw_file    = $4,
                         updated_at  = now()
-                    WHERE id = $4
+                    WHERE id = $5
                     """,
-                    page_count, word_count, len(raw_chunks), str(document_id),
+                    page_count, word_count, len(raw_chunks),
+                    file_data,          # store raw bytes for PDF viewer restore
+                    str(document_id),
                 )
 
         log.info(

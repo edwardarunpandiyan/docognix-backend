@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS documents (
     error_message   TEXT,
     metadata        JSONB       DEFAULT '{}',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    raw_file        BYTEA       DEFAULT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_conversation_id ON documents(conversation_id);
