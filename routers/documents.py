@@ -17,6 +17,7 @@ import logging
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, UploadFile, File
+from fastapi.responses import Response
 
 from config import settings
 from database.postgres import get_pool
@@ -291,6 +292,55 @@ async def get_document(conversation_id: UUID, document_id: UUID):
         chunk_count=row["chunk_count"] or 0,
         status=row["status"],
         created_at=row["created_at"],
+    )
+
+
+
+@router.get("/{document_id}/url")
+async def get_document_file(conversation_id: UUID, document_id: UUID):
+    """
+    Serve the raw file bytes for a document.
+
+    Called by the frontend when IndexedDB is cleared and the PDF blob
+    is gone — allows the viewer to restore the document without re-upload.
+
+    Returns the file as an inline binary response with the correct
+    Content-Type so the browser / PDF.js can open it directly.
+    The frontend caches the returned URL in the IDB signedUrls store.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT filename, file_type, raw_file
+            FROM documents
+            WHERE id = $1 AND conversation_id = $2
+            """,
+            str(document_id), str(conversation_id),
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not row["raw_file"]:
+        raise HTTPException(
+            status_code=404,
+            detail="Raw file not available — document may have been uploaded before file storage was enabled",
+        )
+
+    mime_map = {
+        "pdf":  "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt":  "text/plain; charset=utf-8",
+    }
+    media_type = mime_map.get(row["file_type"], "application/octet-stream")
+
+    return Response(
+        content=bytes(row["raw_file"]),
+        media_type=media_type,
+        headers={
+            # inline = open in browser/viewer, not download
+            "Content-Disposition": f'inline; filename="{row["filename"]}"',
+            "Cache-Control": "private, max-age=3600",
+        },
     )
 
 
