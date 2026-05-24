@@ -214,7 +214,7 @@ async def get_document_status(conversation_id: UUID, document_id: UUID):
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT status, chunk_count, error_message
+            SELECT status, chunk_count, page_count, word_count, error_message
             FROM documents
             WHERE id = $1 AND conversation_id = $2
             """,
@@ -226,6 +226,8 @@ async def get_document_status(conversation_id: UUID, document_id: UUID):
         document_id=document_id,
         status=row["status"],
         chunk_count=row["chunk_count"] or 0,
+        page_count=row["page_count"],
+        word_count=row["word_count"],
         error_message=row["error_message"],
     )
 

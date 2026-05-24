@@ -48,6 +48,8 @@ class DocumentStatus(BaseModel):
     document_id: UUID
     status: str
     chunk_count: int
+    page_count:  int | None = None
+    word_count:  int | None = None
     error_message: str | None = None
 
 
