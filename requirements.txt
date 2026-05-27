@@ -23,7 +23,7 @@ groq==0.13.0                      # Groq SDK – llama-3.3-70b-versatile
 
 # ── Embeddings & Reranking (local, CPU-only) ──────────────────────────────────
 sentence-transformers==3.3.1      # BAAI/bge-small-en-v1.5 + ms-marco reranker
-torch==2.5.1+cpu                  # CPU-only build (smaller, no CUDA)
+torch==2.9.1+cpu                  # CPU-only build (smaller, no CUDA)
 
 # ── Document Parsing ──────────────────────────────────────────────────────────
 pdfplumber==0.11.4                # PDF text + page extraction
