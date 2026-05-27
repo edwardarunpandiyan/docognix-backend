@@ -1,6 +1,24 @@
 """
-services/retrieval.py – Hybrid retrieval pipeline.
+services/retrieval.py – Hybrid retrieval + cross-encoder reranking pipeline.
 Uses conversation_id (renamed from session_id) throughout.
+
+Two-stage retrieval
+────────────────────
+Stage 1 — Bi-encoder recall (fast, high recall):
+    BGE-small embeds query and chunks independently.
+    Vector search + BM25 keyword search fetch top-K candidates (K=20).
+    RRF fuses the two ranked lists into one ordering.
+
+Stage 2 — Cross-encoder precision (accurate, spread-out scores):
+    The top-N candidates (N=rerank_top_n) are scored as (query, chunk) pairs
+    by a MiniLM cross-encoder.  Because the model reads both together, it
+    produces logits that vary dramatically across chunks — even chunks that
+    are topically similar score very differently when only one of them
+    actually answers the question.
+    Logits are passed through sigmoid → [0, 1] before display.
+
+`similarity_score` on SourceReference now holds the cross-encoder sigmoid
+score, which is what the frontend displays as a percentage.
 """
 from __future__ import annotations
 
@@ -10,7 +28,8 @@ from uuid import UUID
 from config import settings
 from database.postgres import get_pool
 from models.documents import SourceReference
-from services.embedding import embed_query, cosine_similarity
+from services.embedding import embed_query
+from services.reranker import rerank
 from utils.text_utils import keyword_score, reciprocal_rank_fusion
 
 log = logging.getLogger(__name__)
@@ -152,10 +171,14 @@ async def get_document_names(document_ids: list[str]) -> dict[str, str]:
     return {r["id"]: r["original_name"] for r in rows}
 
 
-def score_to_confidence(score: float) -> str:
-    if score >= settings.confidence_high:
+def score_to_confidence(cross_encoder_score: float) -> str:
+    """
+    Confidence from cross-encoder sigmoid score [0, 1].
+    Cross-encoder scores are well-calibrated so standard thresholds work.
+    """
+    if cross_encoder_score >= settings.confidence_high:
         return "high"
-    if score >= settings.confidence_medium:
+    if cross_encoder_score >= settings.confidence_medium:
         return "medium"
     return "low"
 
@@ -186,6 +209,7 @@ async def hybrid_retrieve(
         keyword_search(conversation_id, query, top_k, doc_id_strs),
     )
 
+    # ── Stage 1: RRF fusion → top-N candidates ────────────────────────────────
     all_chunks: dict[str, dict] = {}
     for r in vector_results:
         cid = str(r["id"])
@@ -204,34 +228,50 @@ async def hybrid_retrieve(
         chunk["kw_score"] = keyword_score(query, chunk["content"])
         rrf_scores[cid] = rrf_scores.get(cid, 0.0) + chunk["kw_score"] * 0.05
 
+    # RRF orders candidates for recall — cross-encoder will rescore for precision
     ranked_ids = sorted(rrf_scores, key=lambda x: rrf_scores[x], reverse=True)
-    top_ids = ranked_ids[:rerank_n]
+    candidate_ids = ranked_ids[:rerank_n]
+    candidates = [all_chunks[cid] for cid in candidate_ids]
 
-    if not top_ids:
+    if not candidates:
         return [], 0.0
 
-    doc_ids = list({str(all_chunks[cid]["document_id"]) for cid in top_ids})
+    # ── Stage 2: Cross-encoder reranking ─────────────────────────────────────
+    # Scores are sigmoid(logit) → [0, 1].  Semantically irrelevant chunks
+    # drop to 0.05–0.15 even if topically similar; relevant chunks score
+    # 0.80–0.99.  This is where the real differentiation happens.
+    reranked = await rerank(query, candidates)
+
+    # Apply relevance cutoff on cross-encoder score.
+    # rerank_min_ratio relative to the top cross-encoder score.
+    if reranked:
+        top_ce_score = reranked[0][1]
+        min_ce_score = top_ce_score * settings.rerank_min_ratio
+        reranked = [(c, s) for c, s in reranked if s >= min_ce_score]
+
+    if not reranked:
+        return [], 0.0
+
+    doc_ids = list({str(c["document_id"]) for c, _ in reranked})
     doc_names = await get_document_names(doc_ids)
 
     sources: list[SourceReference] = []
-    for cid in top_ids:
-        c = all_chunks[cid]
-        sim = c.get("similarity", 0.0)
-        combined = rrf_scores.get(cid, 0.0)
-        doc_id_str = str(c["document_id"])
+    for chunk, ce_score in reranked:
+        cid = str(chunk["id"])
+        doc_id_str = str(chunk["document_id"])
         sources.append(SourceReference(
-            chunk_id=c["id"],
-            document_id=c["document_id"],
+            chunk_id=chunk["id"],
+            document_id=chunk["document_id"],
             document_name=doc_names.get(doc_id_str, "Unknown"),
-            content=c["content"],
-            page_number=c.get("page_number"),
-            page_end=c.get("page_end"),
-            chunk_index=c["chunk_index"],
-            similarity_score=round(sim, 4),
-            keyword_score=round(c.get("kw_score", 0.0), 4),
-            combined_score=round(combined, 6),
-            confidence=score_to_confidence(sim),
+            content=chunk["content"],
+            page_number=chunk.get("page_number"),
+            page_end=chunk.get("page_end"),
+            chunk_index=chunk["chunk_index"],
+            similarity_score=round(ce_score, 4),              # cross-encoder sigmoid
+            keyword_score=round(chunk.get("kw_score", 0.0), 4),
+            combined_score=round(rrf_scores.get(cid, 0.0), 6), # RRF for debugging
+            confidence=score_to_confidence(ce_score),
         ))
 
-    top_score = all_chunks[top_ids[0]].get("similarity", 0.0) if top_ids else 0.0
+    top_score = sources[0].similarity_score if sources else 0.0
     return sources, top_score
