@@ -46,16 +46,24 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dim: int = 384
 
+    # ── Reranker model (cross-encoder, local, free) ───────────
+    # cross-encoder/ms-marco-MiniLM-L-6-v2  →  ~80 MB, CPU-fast
+    # Scores are min-max normalised per batch so raw logit range
+    # doesn't matter — works correctly regardless of model.
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
     # ── RAG Pipeline ─────────────────────────────────────────
-    chunk_size: int = 512           # target tokens per chunk
-    chunk_overlap: int = 64         # overlap tokens between chunks
-    retrieval_top_k: int = 20       # candidates from vector search
-    rerank_top_n: int = 6           # chunks kept after re-ranking
+    chunk_size: int = 300           # target tokens per chunk
+    chunk_overlap: int = 40         # overlap tokens between chunks
+    retrieval_top_k: int = 20       # Stage 1: candidates fetched by bi-encoder
+    rerank_top_n: int = 6           # Stage 1→2: top-N passed to cross-encoder
+    rerank_min_ratio: float = 0.40  # prune chunks below 40% of top CE score
+                                    # Cross-encoder scores spread wide (0.05–0.99), so 0.20 is already aggressive
     hyde_enabled: bool = True       # Hypothetical Document Embeddings
     hybrid_alpha: float = 0.7       # weight: vector vs keyword (1=all-vector)
     max_context_tokens: int = 6000  # hard cap on context sent to LLM
     llm_temperature: float = 0.1
-    llm_max_tokens: int = 1024
+    llm_max_tokens: int = 2048
 
     # ── Semantic Cache ────────────────────────────────────────
     cache_ttl_seconds: int = 3600   # 1 hour
@@ -66,8 +74,10 @@ class Settings(BaseSettings):
     allowed_extensions: set[str] = {"pdf", "docx", "txt"}
 
     # ── Confidence Thresholds ─────────────────────────────────
-    confidence_high: float = 0.78
-    confidence_medium: float = 0.58
+    # Applied to min-max normalised cross-encoder scores [0, 1].
+    # Top chunk always = 1.0. Thresholds reflect relative relevance gap.
+    confidence_high: float = 0.70
+    confidence_medium: float = 0.35
 
 
 @lru_cache

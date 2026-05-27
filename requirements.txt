@@ -17,8 +17,9 @@ redis[hiredis]==5.2.1             # async Redis client (Upstash TLS)
 # ── LLM ───────────────────────────────────────────────────────────────────────
 groq==0.13.0                      # Groq SDK – llama-3.3-70b-versatile (FREE)
 
-# ── Embeddings (local, free, CPU-friendly) ────────────────────────────────────
-sentence-transformers==3.3.1      # BAAI/bge-small-en-v1.5 (384-dim)
+# ── Embeddings & Reranking (local, free, CPU-friendly) ───────────────────────
+sentence-transformers==3.3.1      # BAAI/bge-small-en-v1.5 (bi-encoder, 384-dim)
+                                  # cross-encoder/ms-marco-MiniLM-L-6-v2 (reranker, ~80MB)
 torch==2.5.1                      # CPU-only build fine for inference
 # To install CPU-only torch (smaller, faster install):
 # pip install torch --index-url https://download.pytorch.org/whl/cpu
