@@ -27,8 +27,7 @@ class Settings(BaseSettings):
     ]
 
     # ── Supabase / PostgreSQL (pgvector) ──────────────────────
-    supabase_db_url: str = ""   # asyncpg DSN:  postgresql+asyncpg://...
-    # e.g. postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres
+    supabase_db_url: str = ""   # postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres
 
     # ── Upstash Redis ─────────────────────────────────────────
     upstash_redis_url: str = ""     # rediss://:<token>@<host>:6379
@@ -36,20 +35,31 @@ class Settings(BaseSettings):
 
     # ── Groq (LLM) ───────────────────────────────────────────
     groq_api_key: str = ""
-    # Best free quality: llama-3.3-70b-versatile
-    # Fast:             llama-3.1-8b-instant
     groq_model: str = "llama-3.3-70b-versatile"
     groq_fallback_model: str = "llama-3.1-8b-instant"
 
-    # ── Embedding model (local, free) ─────────────────────────
-    # BAAI/bge-small-en-v1.5  →  384-dim, ~130 MB, very fast
+    # ── Model mode ────────────────────────────────────────────
+    # true  → load models locally via sentence-transformers (torch required)
+    # false → call HuggingFace Inference API (no torch loaded, saves ~400 MB RAM)
+    use_local_models: bool = False
+
+    # ── HuggingFace Inference API ─────────────────────────────
+    # Required when use_local_models=false.
+    # Get a free token at: https://huggingface.co/settings/tokens
+    hf_api_token: str = ""
+
+    # ── Embedding model ───────────────────────────────────────
+    # BAAI/bge-small-en-v1.5 → 384-dim, ~130 MB locally, free on HF API
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dim: int = 384
 
-    # ── Reranker model (cross-encoder, local, free) ───────────
-    # cross-encoder/ms-marco-MiniLM-L-6-v2  →  ~80 MB, CPU-fast
-    # Scores are min-max normalised per batch so raw logit range
-    # doesn't matter — works correctly regardless of model.
+    # BGE asymmetric query prefix (do not change unless switching models)
+    bge_query_prefix: str = (
+        "Represent this sentence for searching relevant passages: "
+    )
+
+    # ── Reranker model (cross-encoder) ────────────────────────
+    # cross-encoder/ms-marco-MiniLM-L-6-v2 → ~80 MB locally, free on HF API
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # ── RAG Pipeline ─────────────────────────────────────────
@@ -57,8 +67,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = 40         # overlap tokens between chunks
     retrieval_top_k: int = 20       # Stage 1: candidates fetched by bi-encoder
     rerank_top_n: int = 6           # Stage 1→2: top-N passed to cross-encoder
-    rerank_min_ratio: float = 0.40  # prune chunks below 40% of top CE score
-                                    # Cross-encoder scores spread wide (0.05–0.99), so 0.20 is already aggressive
+    rerank_min_ratio: float = 0.40  # prune chunks below 40 % of top CE score
     hyde_enabled: bool = True       # Hypothetical Document Embeddings
     hybrid_alpha: float = 0.7       # weight: vector vs keyword (1=all-vector)
     max_context_tokens: int = 6000  # hard cap on context sent to LLM
@@ -66,16 +75,14 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2048
 
     # ── Semantic Cache ────────────────────────────────────────
-    cache_ttl_seconds: int = 3600   # 1 hour
-    cache_similarity_threshold: float = 0.93   # cosine sim to count as HIT
+    cache_ttl_seconds: int = 3600
+    cache_similarity_threshold: float = 0.93
 
     # ── File Upload ───────────────────────────────────────────
     max_file_size_mb: int = 50
     allowed_extensions: set[str] = {"pdf", "docx", "txt"}
 
     # ── Confidence Thresholds ─────────────────────────────────
-    # Applied to min-max normalised cross-encoder scores [0, 1].
-    # Top chunk always = 1.0. Thresholds reflect relative relevance gap.
     confidence_high: float = 0.70
     confidence_medium: float = 0.35
 
