@@ -28,13 +28,20 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     log.info("🚀  Starting Docognix API v%s", settings.app_version)
 
-    log.info("Loading embedding model: %s …", settings.embedding_model)
-    from services.embedding import _get_model
-    import asyncio
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _get_model)
-    log.info("✅  Embedding model ready.")
+    # ── Preload models (local mode only) ─────────────────────
+    if settings.use_local_models:
+        log.info("Loading local embedding model: %s …", settings.embedding_model)
+        from services.embedding import _get_local_model
+        from services.reranker import _get_local_cross_encoder
+        import asyncio
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _get_local_model)
+        await loop.run_in_executor(None, _get_local_cross_encoder)
+        log.info("✅  Local models ready.")
+    else:
+        log.info("✅  Model mode: HuggingFace Inference API (no local models loaded).")
 
+    # ── PostgreSQL ────────────────────────────────────────────
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -43,6 +50,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.error("❌  PostgreSQL connection failed: %s", e)
 
+    # ── Redis ─────────────────────────────────────────────────
     try:
         redis = await get_redis()
         await redis.ping()
@@ -56,7 +64,6 @@ async def lifespan(app: FastAPI):
     await close_pool()
     await close_redis()
     log.info("Bye 👋")
-
 
 app = FastAPI(
     title=settings.app_name,
