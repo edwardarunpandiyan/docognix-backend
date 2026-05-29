@@ -7,7 +7,7 @@ Mode is controlled by the USE_LOCAL_MODELS environment variable:
                            torch is imported only in this branch, so RAM
                            is not consumed when running in API mode.
 
-  USE_LOCAL_MODELS=false → HuggingFace Inference API (free tier)
+  USE_LOCAL_MODELS=false → HuggingFace InferenceClient (free tier)
                            No torch / sentence-transformers loaded at all.
                            Requires HF_API_TOKEN in environment.
 
@@ -21,17 +21,11 @@ import asyncio
 import logging
 from functools import lru_cache
 
-import httpx
 import numpy as np
 
 from config import settings
 
 log = logging.getLogger(__name__)
-
-# ── HuggingFace Inference API ─────────────────────────────────────────────────
-_HF_EMBED_URL = (
-    "https://api-inference.huggingface.co/pipeline/feature-extraction/{model}"
-)
 
 
 # ── Local model loader (imported lazily – only when USE_LOCAL_MODELS=true) ────
@@ -69,31 +63,25 @@ def _embed_local(texts: list[str], is_query: bool) -> list[list[float]]:
 
 
 def _embed_api(texts: list[str], is_query: bool) -> list[list[float]]:
-    """Embed texts via the HuggingFace Inference API (synchronous)."""
+    """Embed texts via HuggingFace InferenceClient.
+
+    Uses huggingface_hub.InferenceClient which handles auth and connection
+    management reliably across all environments (Render, Colab, etc.).
+    """
+    from huggingface_hub import InferenceClient  # noqa: PLC0415
+
     if is_query:
         texts = [settings.bge_query_prefix + t for t in texts]
 
-    url = _HF_EMBED_URL.format(model=settings.embedding_model)
-    headers = {"Authorization": f"Bearer {settings.hf_api_token}"}
+    client = InferenceClient(token=settings.hf_api_token)
+    result = client.feature_extraction(texts, model=settings.embedding_model)
 
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(url, headers=headers, json={"inputs": texts})
-        response.raise_for_status()
-
-    raw = response.json()
-
-    # HF feature-extraction returns either:
-    #   [[float, ...], ...]          (batch of flat vectors)  ← most models
-    #   [[[float, ...], ...], ...]   (batch of token vectors) ← some models
-    # Flatten token-level outputs by mean-pooling if needed.
+    # result is a numpy ndarray of shape (n, embedding_dim).
+    # Normalise each vector so cosine similarity == dot product,
+    # matching the behaviour of the local sentence-transformers path.
     vectors: list[list[float]] = []
-    for item in raw:
-        if isinstance(item[0], list):
-            # Token-level → mean-pool to a single vector
-            arr = np.array(item, dtype=np.float32).mean(axis=0)
-        else:
-            arr = np.array(item, dtype=np.float32)
-        # Normalise so cosine similarity == dot product (matches local behaviour)
+    for vec in result:
+        arr = np.array(vec, dtype=np.float32)
         norm = np.linalg.norm(arr)
         if norm > 0:
             arr = arr / norm
