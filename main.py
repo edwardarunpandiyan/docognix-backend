@@ -3,6 +3,7 @@ main.py – Docognix FastAPI application.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -28,18 +29,22 @@ log = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     log.info("🚀  Starting Docognix API v%s", settings.app_version)
 
-    # ── Preload models (local mode only) ─────────────────────
+    # ── Preload embedding model (local mode only) ─────────────
     if settings.use_local_models:
         log.info("Loading local embedding model: %s …", settings.embedding_model)
         from services.embedding import _get_local_model
-        from services.reranker import _get_local_cross_encoder
-        import asyncio
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _get_local_model)
-        await loop.run_in_executor(None, _get_local_cross_encoder)
-        log.info("✅  Local models ready.")
+        log.info("✅  Local embedding model ready.")
     else:
         log.info("✅  Model mode: HuggingFace Inference API (no local models loaded).")
+
+    # ── Preload cross-encoder (always) ────────────────────────
+    log.info("Loading cross-encoder model: %s …", settings.reranker_model)
+    from services.reranker import _get_cross_encoder
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _get_cross_encoder)
+    log.info("✅  Cross-encoder ready.")
 
     # ── PostgreSQL ────────────────────────────────────────────
     try:
@@ -64,6 +69,7 @@ async def lifespan(app: FastAPI):
     await close_pool()
     await close_redis()
     log.info("Bye 👋")
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -111,7 +117,7 @@ app.include_router(documents_upload_router,   prefix=PREFIX)  # POST /api/v1/doc
 app.include_router(chat_router,               prefix=PREFIX)
 
 
-@app.get("/health", tags=["Health"])
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
 async def health():
     return {"status": "ok", "version": settings.app_version}
 
