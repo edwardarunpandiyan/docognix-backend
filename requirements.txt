@@ -22,8 +22,9 @@ redis[hiredis]==5.2.1             # async Redis client (Upstash TLS)
 groq==0.13.0                      # Groq SDK – llama-3.3-70b-versatile
 
 # ── Embeddings & Reranking (local, CPU-only) ──────────────────────────────────
-sentence-transformers==3.3.1      # BAAI/bge-small-en-v1.5 + ms-marco reranker (local mode)
-torch==2.9.1+cpu                  # CPU-only build — local mode only, not imported in API mode
+sentence-transformers==5.5.1      # BAAI/bge-small-en-v1.5 + ms-marco reranker (local mode)
+torch==2.11.0+cpu                  # CPU-only build — local mode only, not imported in API mode
+transformers==5.0.0
 
 # ── HuggingFace Inference API ─────────────────────────────────────────────────
 huggingface-hub==1.17.0           # InferenceClient for embedding + reranking (API mode)
