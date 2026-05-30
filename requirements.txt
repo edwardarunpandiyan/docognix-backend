@@ -26,7 +26,7 @@ sentence-transformers==3.3.1      # BAAI/bge-small-en-v1.5 + ms-marco reranker (
 torch==2.9.1+cpu                  # CPU-only build — local mode only, not imported in API mode
 
 # ── HuggingFace Inference API ─────────────────────────────────────────────────
-huggingface-hub==0.27.0           # InferenceClient for embedding + reranking (API mode)
+huggingface-hub==1.17.0           # InferenceClient for embedding + reranking (API mode)
 
 # ── Document Parsing ──────────────────────────────────────────────────────────
 pdfplumber==0.11.4                # PDF text + page extraction

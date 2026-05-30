@@ -63,17 +63,22 @@ def _embed_local(texts: list[str], is_query: bool) -> list[list[float]]:
 
 
 def _embed_api(texts: list[str], is_query: bool) -> list[list[float]]:
-    """Embed texts via HuggingFace InferenceClient.
+    """Embed texts via HuggingFace InferenceClient (batch mode).
 
-    Uses huggingface_hub.InferenceClient which handles auth and connection
-    management reliably across all environments (Render, Colab, etc.).
+    Uses provider='hf-inference' with api_key — compatible with
+    huggingface-hub>=1.0.0 and confirmed working on Render free tier.
+    Sends all texts in a single API call for efficiency.
     """
     from huggingface_hub import InferenceClient  # noqa: PLC0415
 
     if is_query:
         texts = [settings.bge_query_prefix + t for t in texts]
 
-    client = InferenceClient(token=settings.hf_api_token)
+    client = InferenceClient(
+        provider="hf-inference",
+        api_key=settings.hf_api_token,
+    )
+
     result = client.feature_extraction(texts, model=settings.embedding_model)
 
     # result is a numpy ndarray of shape (n, embedding_dim).
